@@ -1,0 +1,109 @@
+<parameter name="content">#!/usr/bin/env python3
+
+from flask import request, session
+from flask_restful import Resource
+from sqlalchemy.exc import IntegrityError
+
+from config import app, db, api
+from models import User, Recipe
+
+class Signup(Resource):
+    def post(self):
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+
+        if not username:
+            return {'message': 'username required'}, 422
+
+        try:
+            user = User(
+                username=username,
+                bio=data.get('bio'),
+                image_url=data.get('image_url')
+            )
+            user.password_hash = password
+
+            db.session.add(user)
+            db.session.commit()
+
+            return user.to_dict(), 201
+
+        except IntegrityError:
+            db.session.rollback()
+            return {'message': 'invalid'}, 422
+
+class CheckSession(Resource):
+    def get(self):
+        user_id = session.get('user_id')
+        if not user_id:
+            return {'message': 'Unauthorized'}, 401
+
+        user = User.query.get(user_id)
+        if not user:
+            return {'message': 'Unauthorized'}, 401
+
+        return user.to_dict()
+
+class Login(Resource):
+    def post(self):
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+
+        user = User.query.filter(User.username == username).first()
+        if not user or not user.authenticate(password):
+            return {'message': 'Invalid credentials'}, 401
+
+        session['user_id'] = user.id
+        return user.to_dict()
+
+class Logout(Resource):
+    def delete(self):
+        if not session.get('user_id'):
+            return {'message': 'Unauthorized'}, 401
+
+        session['user_id'] = None
+        return {}, 204
+
+class RecipeIndex(Resource):
+    def get(self):
+        user_id = session.get('user_id')
+        if not user_id:
+            return {'message': 'Unauthorized'}, 401
+
+        recipes = Recipe.query.filter(Recipe.user_id == user_id).all()
+        return [r.to_dict() for r in recipes], 200
+
+    def post(self):
+        user_id = session.get('user_id')
+        if not user_id:
+            return {'message': 'Unauthorized'}, 401
+
+        data = request.get_json() or {}
+        try:
+            recipe = Recipe(
+                title=data.get('title'),
+                instructions=data.get('instructions'),
+                minutes_to_complete=data.get('minutes_to_complete')
+            )
+            recipe.user = User.query.get(user_id)
+
+            db.session.add(recipe)
+            db.session.commit()
+
+            return recipe.to_dict(), 201
+
+        except (IntegrityError, ValueError):
+            db.session.rollback()
+            return {'message': 'invalid'}, 422
+
+api.add_resource(Signup, '/signup')
+api.add_resource(CheckSession, '/check_session')
+api.add_resource(Login, '/login')
+api.add_resource(Logout, '/logout')
+api.add_resource(RecipeIndex, '/recipes')
+
+if __name__ == '__main__':
+    app.run(port=5555, debug=True)
+</parameter>
